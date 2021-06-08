@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2017-09-01/network"
 	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2017-05-10/resources"
@@ -15,20 +16,29 @@ import (
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"github.com/Azure/go-autorest/autorest/to"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/globalsign/mgo"
 	"github.com/globalsign/mgo/bson"
 )
 
-var deploymentName = "VMDeployQuickstart3"
-var mutex sync.Mutex
+type Value struct {
+	Vmname, Ip, NIC, deploymentName string
+}
 
-const (
+var m = map[string]Value{
+	"vm1": {"vm1", "NIC1", "IP1", "VMDeploy1"},
+	"vm2": {"vm2", "NIC2", "IP2", "VMDeploy2"},
+}
+
+type mapCounter struct {
+	mc map[string]Value
+	sync.RWMutex
+}
+
+var (
+	deploymentName        = "VMDeployQuickstart5"
 	resourceGroupName     = "GoVMQuickstart-1"
-	resourceGroupLocation = "eastus"
-
-	templateFile   = "vm-quickstart-template.json"
-	parametersFile = "vm-quickstart-params.json"
+	resourceGroupLocation = "westus"
+	templateFile          = "vm-quickstart-template.json"
 )
 
 type VmLogin struct {
@@ -78,101 +88,44 @@ func init() {
 }
 
 func main() {
-	var (
-		vmname     = "QuickstartVM3"
-		vmnetname  = "QuickstartNIC3"
-		vmipname   = "QuickstartIP3"
-		vmname2    = "QuickstartVM1"
-		vmnetname2 = "QuickstartNIC1"
-		vmipname2  = "QuickstartIP1"
-	)
-	// var wg sync.WaitGroup
+	mc := mapCounter{
+		mc: make(map[string]Value),
+	}
+	var wg sync.WaitGroup
 
+	wg.Add(len(m))
+	for _, v := range m {
+
+		go func(v Value) {
+			NewVm(&v, &mc)
+			wg.Done()
+		}(v)
+
+	}
+	wg.Wait()
+	time.Sleep(3 * time.Second)
+
+}
+func NewVm(v *Value, mc *mapCounter) {
+	fmt.Println("Starting")
 	group, err := createGroup()
 	if err != nil {
 		log.Fatalf("failed to create group: %v", err)
 	}
 	log.Printf("Created group: %v", *group.Name)
 
-	log.Printf("Starting deployment: %s", deploymentName)
-	result, err := createDeployment(vmname, vmipname, vmnetname)
-	result2, err2 := createDeployment(vmname2, vmipname2, vmnetname2)
-
-	if err2 != nil {
-		log.Fatalf("Failed to deploy: %v", err)
-	}
+	log.Printf("Starting deployment: %s", v.deploymentName)
+	result, err := createDeployment(v, mc)
 	if err != nil {
 		log.Fatalf("Failed to deploy: %v", err)
 	}
 	if result.Name != nil {
-		log.Printf("Completed deployment %v: %v", deploymentName, *result.Properties.ProvisioningState)
+		log.Printf("Completed deployment %v: %v", v.deploymentName, *result.Properties.ProvisioningState)
 	} else {
-		log.Printf("Completed deployment %v (no data returned to SDK)", deploymentName)
+		log.Printf("Completed deployment %v (no data returned to SDK)", v.deploymentName)
 	}
-	if result2.Name != nil {
-		log.Printf("Completed deployment %v: %v", deploymentName, *result.Properties.ProvisioningState)
-	} else {
-		log.Printf("Completed deployment %v (no data returned to SDK)", deploymentName)
-	}
-
-	vmLoginCred := getLogin(vmname, vmipname, vmnetname)
-
-	resGrp := ResourceGroup{
-		Name:   *group.Name,
-		Region: *group.Location,
-		LoginDet: []VmLogin{
-			vmLoginCred,
-		},
-	}
-	org := Organization{
-		OrgName:       "fcx",
-		ResourceGroup: []ResourceGroup{resGrp},
-	}
-
-	db(org, resGrp, vmLoginCred)
-	// time.Sleep(25 * time.Second)
-
-	// for i := 0; i < 1; i++ {
-	// 	wg.Add(1)
-
-	// 		deploymentName = "VMDeployQuickstart1"
-	// 		var (
-	// 			vmname    = "QuickstartVM1"
-	// 			vmnetname = "QuickstartNIC1"
-	// 			vmipname  = "QuickstartIP1"
-	// 		)
-	// 		// modifyJson()
-
-	// 		log.Printf("Starting deployment: %s", deploymentName)
-	// 		result, err := createDeployment(vmname, vmipname, vmnetname)
-	// 		if err != nil {
-	// 			log.Fatalf("Failed to deploy: %v", err)
-	// 		}
-	// 		if result.Name != nil {
-	// 			log.Printf("Completed deployment %v: %v", deploymentName, *result.Properties.ProvisioningState)
-	// 		} else {
-	// 			log.Printf("Completed deployment %v (no data returned to SDK)", deploymentName)
-	// 		}
-
-	// 		vmLoginCred := getLogin(vmname, vmipname, vmnetname)
-
-	// 		resGrp := ResourceGroup{
-	// 			Name:   *group.Name,
-	// 			Region: *group.Location,
-	// 			LoginDet: []VmLogin{
-	// 				vmLoginCred,
-	// 			},
-	// 		}
-	// 		org := Organization{
-	// 			OrgName:       "fcx",
-	// 			ResourceGroup: []ResourceGroup{resGrp},
-	// 		}
-
-	// 		db(org, resGrp, vmLoginCred)
-	// 		defer wg.Done()
-
-	// }
-	// wg.Wait()
+	getLogin(v, mc)
+	time.Sleep(2 * time.Second)
 }
 
 // Create a resource group for the deployment.
@@ -188,36 +141,26 @@ func createGroup() (group resources.Group, err error) {
 }
 
 // Create the deployment
-func createDeployment(vmname, vmipname, vmnetnic string) (deployment resources.DeploymentExtended, err error) {
-	// mutex.Lock()
-	modifyJson(vmname, vmipname, vmnetnic)
+func createDeployment(v *Value, mc *mapCounter) (deployment resources.DeploymentExtended, err error) {
+
 	template, err := readJSON(templateFile)
 	if err != nil {
 		return
 	}
-	params, err := readJSON(parametersFile)
-	fmt.Println((*params)["virtualMachines_QuickstartVM_name"].(map[string]interface{}))
-	fmt.Println((*params)["networkInterfaces_quickstartvm_name"].(map[string]interface{}))
-	fmt.Println((*params)["publicIPAddresses_QuickstartVM_ip_name"].(map[string]interface{}))
-
-	if err != nil {
-		return
-	}
-	(*params)["vm_password"] = map[string]string{
-		"value": clientData.VMPassword,
-	}
+	param := Params(v, mc)
 
 	deploymentsClient := resources.NewDeploymentsClient(clientData.SubscriptionID)
 	deploymentsClient.Authorizer = authorizer
+	c := &param
 
 	deploymentFuture, err := deploymentsClient.CreateOrUpdate(
 		ctx,
 		resourceGroupName,
-		deploymentName,
+		v.Vmname,
 		resources.Deployment{
 			Properties: &resources.DeploymentProperties{
 				Template:   template,
-				Parameters: params,
+				Parameters: c,
 				Mode:       resources.Incremental,
 			},
 		},
@@ -227,33 +170,30 @@ func createDeployment(vmname, vmipname, vmnetnic string) (deployment resources.D
 	}
 	err = deploymentFuture.WaitForCompletionRef(ctx, deploymentsClient.BaseClient.Client)
 	if err != nil {
-		fmt.Println("deploymentFuture - ", err)
 		return
 	}
-	// mutex.Unlock()
 	return deploymentFuture.Result(deploymentsClient)
 }
 
 // Get login information by querying the deployed public IP resource.
-func getLogin(vmname, ipname, netnic string) VmLogin {
-
-	params, err := readJSON(parametersFile)
-
-	if err != nil {
-		log.Fatalf("Unable to read parameters. Get login information with `az network public-ip list -g %s", resourceGroupName)
-	}
-
+func getLogin(v *Value, mc *mapCounter) {
+	param := Params(v, mc)
 	addressClient := network.NewPublicIPAddressesClient(clientData.SubscriptionID)
 	addressClient.Authorizer = authorizer
-	ipName := (*params)["publicIPAddresses_QuickstartVM_ip_name"].(map[string]interface{})
+	//ipName := (*params)["publicIPAddresses_QuickstartVM_ip_name"].(map[string]interface{})
+	ipName := param["publicIPAddresses_QuickstartVM_ip_name"].(map[string]interface{})
+
 	ipAddress, err := addressClient.Get(ctx, resourceGroupName, ipName["value"].(string), "")
 	if err != nil {
 		log.Fatalf("Unable to get IP information. Try using `az network public-ip list -g %s", resourceGroupName)
 	}
 
-	vmUser := (*params)["vm_user"].(map[string]interface{})
-	vmName := (*params)["virtualMachines_QuickstartVM_name"].(map[string]interface{})
-	fmt.Println(vmName)
+	// vmUser := (*params)["vm_user"].(map[string]interface{})
+	// vmName := (*params)["virtualMachines_QuickstartVM_name"].(map[string]interface{})
+
+	vmUser := param["vm_user"].(map[string]interface{})
+	vmName := param["virtualMachines_QuickstartVM_name"].(map[string]interface{})
+
 	log.Printf("Log in with ssh: %s@%s, password: %s",
 		vmUser["value"].(string),
 		*ipAddress.PublicIPAddressPropertiesFormat.IPAddress,
@@ -265,7 +205,7 @@ func getLogin(vmname, ipname, netnic string) VmLogin {
 		VmPassword: clientData.VMPassword,
 		IpAdd:      *ipAddress.IPAddress,
 	}
-	return lg
+	db(&lg)
 }
 
 func readJSON(path string) (*map[string]interface{}, error) {
@@ -277,21 +217,48 @@ func readJSON(path string) (*map[string]interface{}, error) {
 	_ = json.Unmarshal(data, &contents)
 	return &contents, nil
 }
-func modifyJson(vmname, vmipname, vmnic string) {
-	data, err := ioutil.ReadFile(parametersFile)
-	if err != nil {
-		log.Fatalf("failed to read file: %v", err)
+
+func Params(v *Value, mc *mapCounter) map[string]interface{} {
+
+	mc.Lock()
+	var Param = map[string]interface{}{
+		"virtualNetworks_GoQSVM_vnet_name":            map[string]interface{}{"value": "QuickstartVnet"},
+		"virtualMachines_QuickstartVM_name":           map[string]interface{}{"value": v.Vmname},
+		"networkInterfaces_quickstartvm_name":         map[string]interface{}{"value": v.NIC},
+		"publicIPAddresses_QuickstartVM_ip_name":      map[string]interface{}{"value": v.Ip},
+		"networkSecurityGroups_QuickstartVM_nsg_name": map[string]interface{}{"value": "QuickstartNSG"},
+		"subnets_default_name":                        map[string]interface{}{"value": "QuickstartSubnet"},
+		"securityRules_default_allow_ssh_name":        map[string]interface{}{"value": "qsuser"},
+		"osDisk_name":                                 map[string]interface{}{"value": "_OsDisk_1_2e3ae1ad37414eaca81b432401fcdd75"},
+		"vm_user":                                     map[string]interface{}{"value": "quickstart"},
+		"vm_password":                                 map[string]interface{}{"value": "_"},
 	}
-	params := make(map[string]interface{})
-	_ = json.Unmarshal(data, &params)
-
-	params["virtualMachines_QuickstartVM_name"] = vmname
-	params["networkInterfaces_quickstartvm_name"] = vmnic
-	params["publicIPAddresses_QuickstartVM_ip_name"] = vmipname
-
-	err = ioutil.WriteFile(parametersFile, data, 0644)
+	Param["vm_password"] = map[string]string{
+		"value": clientData.VMPassword,
+	}
+	mc.Unlock()
+	return Param
 }
-func db(org Organization, resGrp ResourceGroup, vmLoginCred VmLogin) {
+
+func db(lg *VmLogin) {
+	vmLoginCred := VmLogin{
+		VmName:     lg.VmName,
+		VmUserName: lg.VmPassword,
+		VmPassword: lg.VmPassword,
+		IpAdd:      lg.IpAdd,
+	}
+	resGrp := ResourceGroup{
+		Name:   resourceGroupName,
+		Region: resourceGroupLocation,
+		LoginDet: []VmLogin{
+			vmLoginCred,
+		},
+	}
+	org := Organization{
+		OrgName:       "fcx",
+		ResourceGroup: []ResourceGroup{resGrp},
+	}
+
 	session, err := mgo.Dial("mongodb://localhost")
 	if err != nil {
 		log.Fatal(err)
@@ -302,7 +269,6 @@ func db(org Organization, resGrp ResourceGroup, vmLoginCred VmLogin) {
 
 	var res Organization
 	err = col.Find(bson.M{"org_name": "fcx", "resourcegroup.resourcegroup_name": resGrp.Name}).One(&res)
-	spew.Dump(res)
 	if err == mgo.ErrNotFound {
 		err = col.Insert(&org)
 		if err != nil {

@@ -3,13 +3,13 @@
         "value": "QuickstartVnet"
     },
     "virtualMachines_QuickstartVM_name": {
-        "value": "QuickstartVM3"
+        "value": "QuickstartVM"
     },
     "networkInterfaces_quickstartvm_name": {
-        "value": "QuickstartNIC3"
+        "value": "QuickstartNIC"
     },
     "publicIPAddresses_QuickstartVM_ip_name": {
-        "value": "QuickstartIP3"
+        "value": "QuickstartIP"
     },
     "networkSecurityGroups_QuickstartVM_nsg_name": {
         "value": "QuickstartNSG"
@@ -30,4 +30,3 @@
         "value": "_"
     }
 }
-
