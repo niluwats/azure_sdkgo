@@ -35,7 +35,7 @@ type mapCounter struct {
 }
 
 var (
-	deploymentName        = "VMDeployQuickstart5"
+	deploymentName        = "VMDeployQuickstart"
 	resourceGroupName     = "GoVMQuickstart-1"
 	resourceGroupLocation = "westus"
 	templateFile          = "vm-quickstart-template.json"
