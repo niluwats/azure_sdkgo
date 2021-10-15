@@ -16,8 +16,6 @@ import (
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"github.com/Azure/go-autorest/autorest/to"
-	"github.com/globalsign/mgo"
-	"github.com/globalsign/mgo/bson"
 )
 
 type Value struct {
@@ -25,8 +23,8 @@ type Value struct {
 }
 
 var m = map[string]Value{
-	"vm1": {"vm1", "NIC1", "IP1", "VMDeploy1"},
-	"vm2": {"vm2", "NIC2", "IP2", "VMDeploy2"},
+	"vmtestn2": {"vmtestN2", "NICtestN2", "IPtestN2", "VMDeploytestN2"},
+	// "vmtesn1": {"vm2", "NIC2", "IP2", "VMDeploy2"},
 }
 
 type mapCounter struct {
@@ -36,27 +34,10 @@ type mapCounter struct {
 
 var (
 	deploymentName        = "VMDeployQuickstart"
-	resourceGroupName     = "GoVMQuickstart-1"
-	resourceGroupLocation = "westus"
+	ResourceGroupName     = "az-testnilu"
+	ResourceGroupLocation = "westus"
 	templateFile          = "vm-quickstart-template.json"
 )
-
-type VmLogin struct {
-	VmName     string `bson:"vm_name"`
-	VmUserName string `bson:"vm_username"`
-	VmPassword string `bson:"vm_password"`
-	IpAdd      string `bson:"vm_ip"`
-}
-type ResourceGroup struct {
-	Name     string    `bson:"resourcegroup_name"`
-	Region   string    `bson:"region"`
-	LoginDet []VmLogin `bson:"virtual_machine"`
-}
-
-type Organization struct {
-	OrgName       string          `bson:"org_name"`
-	ResourceGroup []ResourceGroup `bson:"resourcegroup"`
-}
 
 // Information loaded from the authorization file to identify the client
 type clientInfo struct {
@@ -72,6 +53,7 @@ var (
 
 // Authenticate with the Azure services using file-based authentication
 func init() {
+
 	var err error
 	fmt.Println(os.Getenv("AZURE_AUTH_LOCATION"))
 	authorizer, err = auth.NewAuthorizerFromFile(azure.PublicCloud.ResourceManagerEndpoint)
@@ -80,9 +62,11 @@ func init() {
 	}
 
 	authInfo, err := readJSON(os.Getenv("AZURE_AUTH_LOCATION"))
+	// authInfo, err := readJSON("/home/fcx/projects/go_workspace/azuresdk_go/quickstart2.auth")
 	if err != nil {
 		log.Fatalf("Failed to read JSON: %+v", err)
 	}
+
 	clientData.SubscriptionID = (*authInfo)["subscriptionId"].(string)
 	clientData.VMPassword = (*authInfo)["clientSecret"].(string)
 }
@@ -135,9 +119,9 @@ func createGroup() (group resources.Group, err error) {
 
 	return groupsClient.CreateOrUpdate(
 		ctx,
-		resourceGroupName,
+		ResourceGroupName,
 		resources.Group{
-			Location: to.StringPtr(resourceGroupLocation)})
+			Location: to.StringPtr(ResourceGroupLocation)})
 }
 
 // Create the deployment
@@ -155,7 +139,7 @@ func createDeployment(v *Value, mc *mapCounter) (deployment resources.Deployment
 
 	deploymentFuture, err := deploymentsClient.CreateOrUpdate(
 		ctx,
-		resourceGroupName,
+		ResourceGroupName,
 		v.Vmname,
 		resources.Deployment{
 			Properties: &resources.DeploymentProperties{
@@ -180,32 +164,29 @@ func getLogin(v *Value, mc *mapCounter) {
 	param := Params(v, mc)
 	addressClient := network.NewPublicIPAddressesClient(clientData.SubscriptionID)
 	addressClient.Authorizer = authorizer
-	//ipName := (*params)["publicIPAddresses_QuickstartVM_ip_name"].(map[string]interface{})
+
 	ipName := param["publicIPAddresses_QuickstartVM_ip_name"].(map[string]interface{})
 
-	ipAddress, err := addressClient.Get(ctx, resourceGroupName, ipName["value"].(string), "")
+	ipAddress, err := addressClient.Get(ctx, ResourceGroupName, ipName["value"].(string), "")
 	if err != nil {
-		log.Fatalf("Unable to get IP information. Try using `az network public-ip list -g %s", resourceGroupName)
+		log.Fatalf("Unable to get IP information. Try using `az network public-ip list -g %s", ResourceGroupName)
 	}
 
-	// vmUser := (*params)["vm_user"].(map[string]interface{})
-	// vmName := (*params)["virtualMachines_QuickstartVM_name"].(map[string]interface{})
-
 	vmUser := param["vm_user"].(map[string]interface{})
-	vmName := param["virtualMachines_QuickstartVM_name"].(map[string]interface{})
+	// vmName := param["virtualMachines_QuickstartVM_name"].(map[string]interface{})
 
 	log.Printf("Log in with ssh: %s@%s, password: %s",
 		vmUser["value"].(string),
 		*ipAddress.PublicIPAddressPropertiesFormat.IPAddress,
 		clientData.VMPassword)
 
-	lg := VmLogin{
-		VmName:     vmName["value"].(string),
-		VmUserName: vmUser["value"].(string),
-		VmPassword: clientData.VMPassword,
-		IpAdd:      *ipAddress.IPAddress,
-	}
-	db(&lg)
+	// lg := dbhandler.VirtualMachine{
+	// 	VmName:     vmName["value"].(string),
+	// 	VmUserName: vmUser["value"].(string),
+	// 	VmPassword: clientData.VMPassword,
+	// 	IpAdd:      *ipAddress.IPAddress,
+	// }
+	// dbhandler.SaveVm(&lg)
 }
 
 func readJSON(path string) (*map[string]interface{}, error) {
@@ -238,48 +219,4 @@ func Params(v *Value, mc *mapCounter) map[string]interface{} {
 	}
 	mc.Unlock()
 	return Param
-}
-
-func db(lg *VmLogin) {
-	vmLoginCred := VmLogin{
-		VmName:     lg.VmName,
-		VmUserName: lg.VmPassword,
-		VmPassword: lg.VmPassword,
-		IpAdd:      lg.IpAdd,
-	}
-	resGrp := ResourceGroup{
-		Name:   resourceGroupName,
-		Region: resourceGroupLocation,
-		LoginDet: []VmLogin{
-			vmLoginCred,
-		},
-	}
-	org := Organization{
-		OrgName:       "fcx",
-		ResourceGroup: []ResourceGroup{resGrp},
-	}
-
-	session, err := mgo.Dial("mongodb://localhost")
-	if err != nil {
-		log.Fatal(err)
-	}
-	db := session.DB("bethel_dashboard")
-	col := db.C("organizations")
-	defer session.Close()
-
-	var res Organization
-	err = col.Find(bson.M{"org_name": "fcx", "resourcegroup.resourcegroup_name": resGrp.Name}).One(&res)
-	if err == mgo.ErrNotFound {
-		err = col.Insert(&org)
-		if err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		pushQuery := bson.M{"resourcegroup.$.virtual_machine": vmLoginCred}
-		err1 := col.Update(bson.M{"resourcegroup.resourcegroup_name": resGrp.Name}, bson.M{"$addToSet": pushQuery})
-		if err1 != nil {
-			fmt.Println(err1.Error())
-			log.Fatal(err1)
-		}
-	}
 }
